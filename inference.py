@@ -62,7 +62,7 @@ class Generator(nn.Module):
 
 
 model = Generator().cuda()
-model.load_state_dict(torch.load('/home/ps/zhencunjiang/pycharm_project_773/TCFL-OCT-main/result/saved_models/generator.pth'))
+model.load_state_dict(torch.load('/home/ps/zhencunjiang/result/saved_models/generator.pth'))
 model.eval()
 
 
