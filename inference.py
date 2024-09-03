@@ -1,92 +1,57 @@
-from __future__ import division
-import os
-import time
-import glob
-import datetime
+from __future__ import print_function
 import argparse
-import numpy as np
-import torchvision
-import cv2
-from PIL import Image
-import torch
-import torch.optim as optim
-from torch.optim import lr_scheduler
-from torchvision import transforms
+import os
 from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
-import torch.nn as nn
 from torch.autograd import Variable
-from math import sqrt
+from skimage import io
+import torch
+from model import *
+import cv2
+from DataLoader_duke17 import *
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--batch_size", type=int, default=1, help="size of the batches")
+parser.add_argument("--threads", type=int, default=0, help="number of cpu threads to use during batch generation")
+opt = parser.parse_args()
 
+cuda = True if torch.cuda.is_available() else False
 
+generator = Generator()
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+torch.cuda.set_device(0)
 
-transform = transforms.Compose([
-    transforms.ToTensor()
-])
+if cuda:
+    generator = generator.cuda()
+print('===> Loading datasets')
 
-class Generator(nn.Module):
-    def __init__(self, channels = 1, num_of_layers=10):
-        super(Generator, self).__init__()
-        kernel_size = 3
-        padding = 1
-        features = 64
-        layers = []
-        layers.append(nn.Conv2d(in_channels=channels, out_channels=features, kernel_size=kernel_size, padding=padding, bias=False))
-        layers.append(nn.LeakyReLU(inplace=True))
-        self.relu1 = nn.Sigmoid()
+val_dataloader = octDataset('/home/ps/zhencunjiang/SNA_NVL/duke17.csv')
+validation_data_loader = DataLoader(dataset=val_dataloader, num_workers=opt.threads, batch_size=opt.batch_size,shuffle=False)
+Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
-        for _ in range(num_of_layers-2):
-            layers.append(nn.Conv2d(in_channels=features, out_channels=features, kernel_size=kernel_size, padding=padding, bias=False))
-            layers.append(nn.BatchNorm2d(features))
-            layers.append(nn.LeakyReLU(inplace=True))
-
-        layers.append(nn.Conv2d(in_channels=features, out_channels=1, kernel_size=kernel_size, padding=padding, bias=False))
-        self.dncnn = nn.Sequential(*layers)
-        self._initialize_weights()
-
-    def forward(self, x0):
-        out = self.dncnn(x0)
-        return out
-
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, sqrt(2. / n))
-                if m.bias is not None:
-                    m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-
-model = Generator().cuda()
-model.load_state_dict(torch.load('/home/ps/zhencunjiang/result/saved_models/generator.pth'))
-model.eval()
-
-
-input_folder = '/home/ps/zhencunjiang/pycharm_project_773/OCT_DDPM-main/add_noise/duke17_0.02'
-output_folder = '/home/ps/zhencunjiang/pycharm_project_773/OCT_DDPM-main/add_noise_infer/duke17_0.02'
-
-
-os.makedirs(output_folder, exist_ok=True)
-def load_image(filepath):
-    image =Image.open(filepath)
-    image = np.array(image).astype('float32')/255.0
-    return torch.tensor(np.expand_dims(image, axis=0)).unsqueeze(0)
-
-for filename in os.listdir(input_folder):
-    if filename.endswith('.tif') or filename.endswith('.png'):
-        img_path = os.path.join(input_folder, filename)
-        image = Variable(load_image(img_path)).cuda()
-        print(image.max())
+def inference():
+    generator.load_state_dict(torch.load(r"/home/ps/zhencunjiang/SNA_NVL/result/saved_models/bais=0.3_loss_noise_generator.pth", map_location='cpu'))
+    index = 0
+    for i, batch in enumerate(validation_data_loader):
+        index = index + 1
+        noisy = Variable(batch["A"])
+        if cuda:
+            noisy = noisy.cuda()
         with torch.no_grad():
-            noise = model(image)
-            imgout_test = image - noise
-            imgout_test = (imgout_test[0][0]).detach().cpu()
+            # print(noisy.shape)
+            noise = generator(noisy)
+            imgout_test = noisy - noise
+            imgout_test = (imgout_test[0][0]).detach().cpu().numpy()
             imgout_test[imgout_test > 1.0] = 1.0
             imgout_test[imgout_test < 0.0] = 0.0
+        
+        imgout_test = imgout_test * 255.0
+        root_result_test = r"/home/ps/zhencunjiang/SNA_NVL/saved_models_all_duke17"
+        os.makedirs(root_result_test,exist_ok=True)
+        filename_result_test = str(index) + '_noise_diff.png'
+        filename_abs_root_test = os.path.join(root_result_test, filename_result_test)
+        cv2.imwrite(filename_abs_root_test, imgout_test)
 
-        result_img = imgout_test
-        torchvision.utils.save_image(result_img, os.path.join(output_folder, f'result_{filename}'))
+
+
+
+inference()
